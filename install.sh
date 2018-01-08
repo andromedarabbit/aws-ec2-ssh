@@ -87,19 +87,34 @@ export ASSUME_ROLE
 export USERADD_PROGRAM
 export USERADD_ARGS
 
+tmpdir=$(mktemp -d)
+
+cd "$tmpdir"
+
+git clone -b master https://github.com/andromedarabbit/aws-ec2-ssh.git
+
+cd "$tmpdir/aws-ec2-ssh"
+
+OS_ID=$(cat /etc/os-release | egrep '^ID=' | awk -F "=" '/ID=/ {print $2}')
+if [[ "${OS_ID}" == "coreos" ]]; then
+  mkdir -p /opt/aws/bin/
+  cp aws.sh /opt/aws/bin/aws
+  chmod +x /opt/aws/bin/aws
+  PATH=$PATH:/opt/aws/bin
+
+  mkdir -p /opt/etc/ssh/
+
+  if [[ "$(/usr/bin/readlink -f /etc/ssh/sshd_config)" != "/opt/etc/ssh/sshd_config" ]]; then
+    cp /etc/ssh/sshd_config /opt/etc/ssh/sshd_config
+    ln -s /opt/etc/ssh/sshd_config /etc/ssh/sshd_config --force
+  fi
+fi
+
 # check if AWS CLI exists
 if ! [ -x "$(which aws)" ]; then
     echo "aws executable not found - exiting!"
     exit 1
 fi
-
-tmpdir=$(mktemp -d)
-
-cd "$tmpdir"
-
-git clone -b master https://github.com/widdix/aws-ec2-ssh.git
-
-cd "$tmpdir/aws-ec2-ssh"
 
 cp authorized_keys_command.sh $AUTHORIZED_KEYS_COMMAND_FILE
 cp import_users.sh $IMPORT_USERS_SCRIPT_FILE
@@ -138,14 +153,16 @@ fi
 
 ./install_configure_sshd.sh
 
-cat > /etc/cron.d/import_users << EOF
+if [[ "${OS_ID}" != "coreos" ]]; then
+  cat > /etc/cron.d/import_users << EOF
 SHELL=/bin/bash
 PATH=/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/aws/bin
 MAILTO=root
 HOME=/
 */10 * * * * root $IMPORT_USERS_SCRIPT_FILE
 EOF
-chmod 0644 /etc/cron.d/import_users
+  chmod 0644 /etc/cron.d/import_users
+fi
 
 $IMPORT_USERS_SCRIPT_FILE
 

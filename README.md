@@ -7,6 +7,7 @@ Use your IAM user's public SSH key to get access via SSH to an **EC2 instance** 
 * SUSE Linux Enterprise Server 12 SP3
 * RHEL 7.4
 * CentOS 7
+* CoreOS 1576.5.0 
 
 `aws-ec2-ssh` depends on the [AWS CLI](https://aws.amazon.com/cli/) and `git` if you use the `install.sh` script.
 
@@ -73,6 +74,75 @@ A picture is worth a thousand words:
 4. The configuration file is placed into `/etc/aws-ec2-ssh.conf`
 5. Connect to your EC2 instances now using `ssh $Username@$PublicName` with `$Username` being your IAM user, and `$PublicName` being your server's name or IP address
 
+### Install via CoreOS Cloud-Config
+
+1. Upload your public SSH key to IAM: 
+   1. Open the Users section in the [IAM Management Console](https://console.aws.amazon.com/iam/home#users)
+   2. Click the row with your user
+   3. Select the **Security Credentials** tab
+   4. Click the **Upload SSH public key** button at the bottom of the page
+   5. Paste your public SSH key into the text-area and click the **Upload SSH public key** button to save
+2. Attach the IAM permissions defined in [`iam_ssh_policy.json`](./iam_ssh_policy.json) to the EC2 instances (by creating an IAM role and an Instance Profile)
+3. Use the following cloud-config template as your instance user-data:
+  ```
+  #cloud-config
+
+  coreos:
+    units:
+      - name: aws-ec2-ssh-install.service
+        command: start
+        enable: true
+        content: |
+          [Unit]
+          Description=Install aws-ec2-ssh
+          Requires=docker.service
+          After=docker.service
+
+          [Service]
+          Type=oneshot
+          EnvironmentFile=/etc/os-release
+          Environment="DOCKER_OPTS=--net=host"
+          ExecStartPre=/usr/bin/mkdir -p /opt/aws-ec2-ssh/bin/
+          ExecStartPre=/usr/bin/curl --silent -L https://github.com/andromedarabbit/aws-ec2-ssh/raw/master/install.sh -o /opt/aws-ec2-ssh/bin/install.sh
+          ExecStartPre=/usr/bin/chmod +x /opt/aws-ec2-ssh/bin/install.sh
+          ExecStartPre=/usr/bin/docker pull opsgang/awscli:stable
+          TimeoutStartSec=0
+          ExecStart=/opt/aws-ec2-ssh/bin/install.sh -i Administrators -l wheel -s Administrators
+          RemainAfterExit=true
+
+      - name: aws-ec2-ssh-import.service
+        command: start
+        enable: true
+        content: |
+          [Unit]
+          Description=Run import script
+          Requires=aws-ec2-ssh-install.service
+          After=aws-ec2-ssh-install.service
+
+          [Service]
+          Type=oneshot
+          EnvironmentFile=/etc/os-release
+          Environment="DOCKER_OPTS=--net=host"
+          ExecStart=/opt/import_users.sh
+          RemainAfterExit=true
+
+      - name: aws-ec2-ssh-import.timer
+        command: start
+        enable: true
+        content: |
+          [Unit]
+          Description=Run import script periodically
+          Requires=aws-ec2-ssh-import.service
+          After=aws-ec2-ssh-import.service
+
+          [Timer]
+          # Time to wait after booting before we run first time
+          OnBootSec=10min
+          OnCalendar=*:0/15
+  ``` 
+
+4. Connect to your EC2 instances now using `ssh $Username@$PublicName` with `$Username` being your IAM user, and `$PublicName` being your server's name or IP address
+
 ## IAM user names and Linux user names
 
 Allowed characters for IAM user names are:
@@ -91,6 +161,10 @@ This solution will use the following mapping for those special characters when c
 * `@` => `.at.`
 
 So instead of `name@email.com` you will need to use `name.at.email.com` when login via SSH.
+
+All the upper-case characters will also be converted to lower-cases:
+
+* `[:upper:]` => `[:lower:]`
 
 Linux user names may only be up to 32 characters long.
 
@@ -156,3 +230,11 @@ For your EC2 instances, you need a IAM role that allows the `sts:AssumeRole` act
   * IAM API limitations
   * Disk space issues
 * **not all IAM user names are allowed in Linux user names** (e.g. if you use email addresses as IAM user names). See section [IAM user names and Linux user names](#iam-user-names-and-linux-user-names) for further details.
+* Since **CoreOS** does not ship Python interpreter, which is required by AWS CLI, Docker container is run by the system to run `aws` command. This means that `AuthorizedKeysCommandUser` should be `root`, instead of `nobody`. There might be some security concerns regarding this. Using a tool like [wallix/awless](https://github.com/wallix/awless) instead of Python-base AWS CLI might be the solution for this.
+
+## See also
+
+* [bytewareio/iam_ssh_authorizedkeys](https://github.com/bytewareio/iam_ssh_authorizedkeys)
+* [davidrjonas/ssh-iam-bridge](https://github.com/davidrjonas/ssh-iam-bridge)
+* [AlexRudd/key-manager](https://github.com/AlexRudd/key-manager)
+* [opsgang/docker_awscli](https://github.com/opsgang/docker_awscli)

@@ -7,6 +7,11 @@
 # This is observed on CentOS 7 and RHEL 7
 
 # Capture the return code and use that to determine if we have the command available
+OS_ID=$(cat /etc/os-release | egrep '^ID=' | awk -F "=" '/ID=/ {print $2}')
+if [[ "${OS_ID}" == "coreos" ]]; then
+	exit 0
+fi
+
 retval=0
 which getenforce > /dev/null 2>&1 || retval=$?
 

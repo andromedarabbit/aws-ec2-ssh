@@ -4,6 +4,11 @@ function log() {
     /usr/bin/logger -i -p auth.info -t aws-ec2-ssh "$@"
 }
 
+OS_ID=$(cat /etc/os-release | egrep '^ID=' | awk -F "=" '/ID=/ {print $2}')
+if [[ "${OS_ID}" == "coreos" ]]; then
+  PATH=$PATH:/opt/aws/bin
+fi
+
 # check if AWS CLI exists
 if ! [ -x "$(which aws)" ]; then
     log "aws executable not found - exiting!"
@@ -72,7 +77,12 @@ function setup_aws_credentials() {
         AWS_SECRET_ACCESS_KEY=$(echo "${stscredentials}" | awk '{print $3}')
         AWS_SESSION_TOKEN=$(echo "${stscredentials}" | awk '{print $1}')
         AWS_SECURITY_TOKEN=$(echo "${stscredentials}" | awk '{print $1}')
-        export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+        
+        if [[ "${OS_ID}" == "coreos" ]]; then
+            export DOCKER_OPTS="${DOCKER_OPTS} -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -e AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN} -e AWS_SECURITY_TOKEN=${AWS_SECURITY_TOKEN}"
+        else
+            export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+        fi
     fi
 }
 
@@ -221,6 +231,7 @@ function clean_iam_username() {
     clean_username=${clean_username//"="/".equal."}
     clean_username=${clean_username//","/".comma."}
     clean_username=${clean_username//"@"/".at."}
+    clean_username=$(echo -n "${clean_username}" | tr '[:upper:]' '[:lower:]')
     echo "${clean_username}"
 }
 

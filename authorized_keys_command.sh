@@ -4,6 +4,12 @@ if [ -z "$1" ]; then
   exit 1
 fi
 
+OS_ID=$(cat /etc/os-release | egrep '^ID=' | awk -F "=" '/ID=/ {print $2}')
+if [[ "${OS_ID}" == "coreos" ]]; then
+  PATH=$PATH:/opt/aws/bin
+  export DOCKER_OPTS="${DOCKER_OPTS} --net=host"
+fi
+
 # check if AWS CLI exists
 if ! [ -x "$(which aws)" ]; then
     echo "aws executable not found - exiting!"
@@ -30,7 +36,12 @@ then
   AWS_SECRET_ACCESS_KEY=$(echo "${STSCredentials}" | awk '{print $3}')
   AWS_SESSION_TOKEN=$(echo "${STSCredentials}" | awk '{print $1}')
   AWS_SECURITY_TOKEN=$(echo "${STSCredentials}" | awk '{print $1}')
-  export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+
+  if [[ "${OS_ID}" == "coreos" ]]; then
+    export DOCKER_OPTS="${DOCKER_OPTS} -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -e AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN} -e AWS_SECURITY_TOKEN=${AWS_SECURITY_TOKEN}"
+  else
+    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+  fi
 fi
 
 UnsaveUserName="$1"
@@ -38,7 +49,12 @@ UnsaveUserName=${UnsaveUserName//".plus."/"+"}
 UnsaveUserName=${UnsaveUserName//".equal."/"="}
 UnsaveUserName=${UnsaveUserName//".comma."/","}
 UnsaveUserName=${UnsaveUserName//".at."/"@"}
+UnsaveUserName=$(aws iam list-users | jq '.Users[] | .UserName' | tr -d '"' | grep -i "${UnsaveUserName}")
 
-aws iam list-ssh-public-keys --user-name "$UnsaveUserName" --query "SSHPublicKeys[?Status == 'Active'].[SSHPublicKeyId]" --output text | while read -r KeyId; do
+if [ -z "${UnsaveUserName}" ]; then
+  exit 2
+fi
+
+aws iam list-ssh-public-keys --user-name "$UnsaveUserName" | jq '.SSHPublicKeys[] | select(.Status | contains("Active")) | .SSHPublicKeyId' | tr -d '"' | while read -r KeyId; do
   aws iam get-ssh-public-key --user-name "$UnsaveUserName" --ssh-public-key-id "$KeyId" --encoding SSH --query "SSHPublicKey.SSHPublicKeyBody" --output text
 done
